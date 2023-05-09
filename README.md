@@ -9,3 +9,7 @@ I created a ESP32 Wetterstation which sends the sensor data to a InfluxDB which 
 - BMP280 Pressure & Temperature Sensor
 - BH1750 Light Meter
 - Analog Rain Sensor
+
+### Update 05.2023
+
+I added a Shelly 3EM in my local network which should also be sent to InfluxDB.

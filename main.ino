@@ -1,6 +1,8 @@
 // W-Lan & Serverbibliothek
 #include <WiFiMulti.h>
 #include <InfluxDbClient.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 // Sensorbibliotheken
 #include <Wire.h>
@@ -23,7 +25,7 @@
 
 // InfluxDB
 #define INFLUXDB_URL "***"
-#define INFLUXDB_DB_NAME "wetterstation"
+#define INFLUXDB_DB_NAME "***"
 #define INFLUXDB_USER "***"
 #define INFLUXDB_PASSWORD "***"
 
@@ -91,6 +93,19 @@ void setup()
 
 void loop() {
   sensor.clearFields();
+
+  HTTPClient http; //Instanz von HTTPClient starten
+  http.begin("http://***ShellyIPAdress***/rpc/EM.GetStatus?id=0"); //Abfrage-URL
+  int httpCode = http.GET(); //Antwort des Servers abrufen
+  if (httpCode == 200) {
+    String payload = http.getString(); //Daten in eine Variable speichern
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
+    JsonObject root = doc.as<JsonObject>();
+    for (JsonPair kv : root) {
+      sensor.addField(kv.key().c_str(), kv.value().as<float>());
+    }
+  }
   
   temperature_in = bme.readTemperature();
   pressure = bme.readPressure() / 100.0F;
