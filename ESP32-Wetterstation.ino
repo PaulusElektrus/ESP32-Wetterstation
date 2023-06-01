@@ -29,7 +29,7 @@
 #define INFLUXDB_USER "***"
 #define INFLUXDB_PASSWORD "***"
 
-// Sensorbibliotheken & Server laden
+// Initialisieren
 WiFiMulti wifiMulti;
 Adafruit_BMP280 bme;
 BH1750 lightMeter;
@@ -39,34 +39,23 @@ InfluxDBClient client(INFLUXDB_URL, INFLUXDB_DB_NAME);
 // Variablen
 float temperature_in, pressure, altitude, lux, humidity, temperature_out, gt, regen, da;
 Point sensor("wetterdaten");
+Point energy("shelly");
 
- 
-//////////////////////////// SETUP
+// Timing
+unsigned long startMillis;
+unsigned long currentMillis;
+const unsigned long updateInterval = 60000;
 
-void setup() 
-{
+
+void setup() {
   // serieller Monitor
-  Serial.begin(9600);
-  Serial.println("Booting...");
-
-  Serial.println("Verbinden mit ");
-  Serial.println(WIFI_SSID);
+  Serial.begin(115200);
 
   // W-Lan Verbindung
   WiFi.mode(WIFI_STA);
   wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
-
-  // W-Lan prüfen 
-  while (wifiMulti.run() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-
-  Serial.println("");
-  Serial.println("WiFi verbunden..!");
-  Serial.print("IP= ");  Serial.println(WiFi.localIP());
-
-  client.setConnectionParamsV1(INFLUXDB_URL, INFLUXDB_DB_NAME, INFLUXDB_USER, INFLUXDB_PASSWORD);
+  wifiMulti.run();
+  Serial.print("IP = ");  Serial.println(WiFi.localIP());
 
   // Sensoren starten
   sensor.addTag("device", DEVICE);
@@ -77,36 +66,45 @@ void setup()
   dht.begin();
 
   // Check InfluxDB connection
-  if (client.validateConnection()) {
-    Serial.print("Connected to InfluxDB: ");
-    Serial.println(client.getServerUrl());
-  } else {
-    Serial.print("InfluxDB connection failed: ");
-    Serial.println(client.getLastErrorMessage());
-  }
-
-  Serial.println("Start des Hauptprogramms");
+  client.setConnectionParamsV1(INFLUXDB_URL, INFLUXDB_DB_NAME, INFLUXDB_USER, INFLUXDB_PASSWORD);
+  client.validateConnection();
 }
 
 
-//////////////////////////// HAUPTPROGRAMM
-
 void loop() {
-  sensor.clearFields();
+  currentMillis = millis();
+    if (currentMillis - startMillis >= updateInterval) {
+      getWeatherData();
+      startMillis = currentMillis;
+    }
+  getShellyData();
+  Serial.println("Loop");
+}
 
-  HTTPClient http; //Instanz von HTTPClient starten
-  http.begin("http://***ShellyIPAdress***/rpc/EM.GetStatus?id=0"); //Abfrage-URL
-  int httpCode = http.GET(); //Antwort des Servers abrufen
-  if (httpCode == 200) {
-    String payload = http.getString(); //Daten in eine Variable speichern
+
+void getShellyData() {
+  energy.clearFields();
+
+  HTTPClient http;
+  http.begin("http://192.168.0.121/rpc/EM.GetStatus?id=0");
+  int httpCode = http.GET();
+  if (httpCode > 0) {
+    String payload = http.getString();
     DynamicJsonDocument doc(1024);
     deserializeJson(doc, payload);
     JsonObject root = doc.as<JsonObject>();
     for (JsonPair kv : root) {
-      sensor.addField(kv.key().c_str(), kv.value().as<float>());
+      energy.addField(kv.key().c_str(), kv.value().as<float>());
     }
+    writeInfluxDB(true);
   }
-  
+  http.end();
+}
+
+
+void getWeatherData() {
+  sensor.clearFields();
+
   temperature_in = bme.readTemperature();
   pressure = bme.readPressure() / 100.0F;
   altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
@@ -118,7 +116,6 @@ void loop() {
   regen = analogRead(34);
   regen = regen/4095;
   regen = (1/regen)-1.6;
-  Serial.println("Sensoren ausgelesen");
 
   sensor.addField("T_in", temperature_in);
   sensor.addField("Pressure", pressure);
@@ -128,22 +125,13 @@ void loop() {
   sensor.addField("T_out", temperature_out);
   sensor.addField("gt", gt);
   sensor.addField("rain", regen);
-  
-  // Print what are we exactly writing
-  Serial.print("Writing: ");
-  Serial.println(client.pointToLineProtocol(sensor));
-  // If no Wifi signal, try to reconnect it
-  if (wifiMulti.run() != WL_CONNECTED) {
-    Serial.println("Wifi connection lost");
-  }
-  
-  // Write point
-  if (!client.writePoint(sensor)) {
-    Serial.print("InfluxDB write failed: ");
-    Serial.println(client.getLastErrorMessage());
-  }
-  
-  //Wait 10s
-  Serial.println("Wait 10s");
-  delay(10000);
+
+  writeInfluxDB(false);
+}
+
+
+void writeInfluxDB(bool which) {
+  if (which == true) {client.pointToLineProtocol(energy); client.writePoint(energy);}
+  else {client.pointToLineProtocol(sensor); client.writePoint(sensor);}
+  delay(500);
 }
